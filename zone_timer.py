@@ -4,12 +4,7 @@ from config import ZONE_TIMINGS
 
 
 class ZoneTimer(QObject):
-    """核心计时逻辑，已从 ui_panel.py 抽离出来。
-
-    - 管理倒计时 / 缩圈阶段切换
-    - 同步 parent(ControlPanel) 的 zone_level，并刷新覆盖层
-    - 在关键节点调用 voice 播报
-    """
+    """核心计时逻辑。"""
 
     def __init__(self, panel):
         super().__init__(panel)
@@ -21,7 +16,7 @@ class ZoneTimer(QObject):
 
         self._reset_state()
 
-
+    # ---- 对外接口 ----
     def start(self, stage_idx: int, countdown_seconds: int):
         """开始计时。
 
@@ -35,8 +30,7 @@ class ZoneTimer(QObject):
         self.panel.zone_level = self.zone_level  # Mirror to UI
 
         self.remaining_seconds = countdown_seconds
-        self.sync_time = QDateTime.currentDateTime().addSecs(-1)
-
+        self.sync_time = QDateTime.currentDateTime()
 
         if hasattr(self.panel, "linked_overlay"):
             self.panel.linked_overlay.update()
@@ -47,7 +41,16 @@ class ZoneTimer(QObject):
     def stop(self):
         self._qt_timer.stop()
 
+    def reset(self):
+        """完全复位：停止计时并清空内部状态。"""
+        self.stop()
+        self._reset_state()
+        # 同步面板显示
+        self.panel.zone_level = 1
+        if hasattr(self.panel, "linked_overlay"):
+            self.panel.linked_overlay.update()
 
+    # ---- 内部逻辑 ----
     def _tick(self):
         if not self.sync_time:
             return
@@ -56,6 +59,7 @@ class ZoneTimer(QObject):
         total = self.remaining_seconds - elapsed
         int_total = int(total)
 
+        # 仅在“缩圈中”监测 8 秒播报
         if self.sync_phase == "shrinking":
             next_stage = self.zone_level + 1
             if (
@@ -66,13 +70,15 @@ class ZoneTimer(QObject):
                 self._played_pre_stage.add(next_stage)
         self._prev_total = int_total
 
-
+        # 阶段/相位切换判定
         if total <= 0:
             if self.sync_phase == "countdown":
+                # 开始缩圈
                 self.sync_phase = "shrinking"
                 self.sync_time = QDateTime.currentDateTime()
                 self.remaining_seconds = ZONE_TIMINGS[self.sync_index][2]
             else:
+                # 缩圈结束 -> 进入下一阶段倒计时
                 self.sync_index += 1
                 if self.sync_index < len(ZONE_TIMINGS):
                     self.sync_phase = "countdown"
@@ -81,7 +87,6 @@ class ZoneTimer(QObject):
                     self.zone_level = ZONE_TIMINGS[self.sync_index][0]
                     self.panel.zone_level = self.zone_level
 
-
                     if self.zone_level == 9 and not self._played_stage9_started:
                         self.panel.voice.play_stage9_start()
                         self._played_stage9_started = True
@@ -89,13 +94,12 @@ class ZoneTimer(QObject):
                     if hasattr(self.panel, "linked_overlay"):
                         self.panel.linked_overlay.update()
                 else:
-
+                    # 全流程完成
                     self.stop()
                     self.panel.info_label.setText("阶段 10 已结束")
                     return
             total = self.remaining_seconds
             int_total = int(total)
-
 
         m, s = divmod(max(0, int_total), 60)
         label = "倒计时" if self.sync_phase == "countdown" else "缩圈中"

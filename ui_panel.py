@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QLineEdit, QMessageBox, QCheckBox, QSlider,
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QGuiApplication
 
 from config import RES_GEOMETRY, TOLERANCE_MAP, ZONE_TIMINGS
 from voice import VoiceManager
@@ -18,7 +18,7 @@ class ControlPanel(QWidget):
 
         self.setWindowTitle("抗毒小助手")
         self.setFixedSize(680, 680)
-        self.setWindowFlags(Qt.WindowStaysOnTopHint)
+        self.is_synced = False
 
         base_font = QFont("微软雅黑", 20)
         self.setFont(base_font)
@@ -58,31 +58,35 @@ class ControlPanel(QWidget):
             }
         """)
 
-
+        # --- 状态 ---
         self.zone_level = 1
         self.tolerance_mode = "正常"
         self.resolution_text = "2560x1440 (2K)"
         self.guides_enabled = True
 
-
+        # --- 组件 ---
         self.voice = VoiceManager(self)
         self.zone_timer = ZoneTimer(self)
-
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 40, 40, 40)
         layout.setSpacing(26)
 
-
+        # 分辨率
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("分辨率："))
         self.res_combo = QComboBox(); self.res_combo.setFont(base_font); self.res_combo.setFixedHeight(60)
         self.res_combo.addItems(RES_GEOMETRY.keys())
+        # 启动时自动检测并选中
+        autodetected = self.auto_detect_resolution()
+        if autodetected:
+            self.resolution_text = autodetected
         self.res_combo.setCurrentText(self.resolution_text)
         self.res_combo.currentTextChanged.connect(self.update_resolution)
         row1.addWidget(self.res_combo)
         layout.addLayout(row1)
 
+        # 阶段选择
         self.row_stage = QHBoxLayout()
         self.row_stage.addWidget(QLabel("选择阶段："))
         self.stage_combo = QComboBox(); self.stage_combo.setFont(base_font); self.stage_combo.setFixedHeight(60)
@@ -90,15 +94,16 @@ class ControlPanel(QWidget):
         self.row_stage.addWidget(self.stage_combo)
         layout.addLayout(self.row_stage)
 
-
+        # 倒计时输入
         self.row_timer = QHBoxLayout()
-        self.row_timer.addWidget(QLabel("<font color='#D9534F'><b>缩圈倒计时：</b></font>"))
+        self.row_timer.addWidget(QLabel("距离缩圈开始剩余：<span style='color: rgba(217,83,79,0);'>____________</span>"))
         self.minute_input = QLineEdit("3"); self.minute_input.setFixedHeight(60)
         self.row_timer.addWidget(self.minute_input); self.row_timer.addWidget(QLabel("分"))
         self.second_input = QLineEdit("0"); self.second_input.setFixedHeight(60)
         self.row_timer.addWidget(self.second_input); self.row_timer.addWidget(QLabel("秒"))
         layout.addLayout(self.row_timer)
 
+        # 容错
         row4 = QHBoxLayout()
         row4.addWidget(QLabel("容错模式："))
         self.mode_combo = QComboBox(); self.mode_combo.setFont(base_font); self.mode_combo.setFixedHeight(60)
@@ -108,8 +113,8 @@ class ControlPanel(QWidget):
         row4.addWidget(self.mode_combo)
         layout.addLayout(row4)
 
+        # 语音 & 音量
         row5 = QHBoxLayout()
-
         self.voice_chk = QCheckBox("启用语音提示")
         self.voice_chk.setChecked(True)
         self.voice_chk.stateChanged.connect(lambda st: self.voice.set_enabled(st == Qt.Checked))
@@ -125,21 +130,20 @@ class ControlPanel(QWidget):
         self.volume_slider.setFixedWidth(200)
         self.volume_slider.valueChanged.connect(lambda v: self.voice.set_volume(v / 100.0))
         row5.addWidget(self.volume_slider)
-
         layout.addLayout(row5)
 
-
+        # 其它选项
         row6 = QHBoxLayout()
         self.guides_chk = QCheckBox("启用辅助线")
         self.guides_chk.setChecked(True)
         self.guides_chk.stateChanged.connect(self.on_guides_toggled)
         row6.addWidget(self.guides_chk)
 
-        self.auto_min_chk = QCheckBox("同步后自动最小化"); self.auto_min_chk.setChecked(True)
+        self.auto_min_chk = QCheckBox("同步后自动最小化"); self.auto_min_chk.setChecked(False)
         row6.addWidget(self.auto_min_chk)
         layout.addLayout(row6)
 
-
+        # 同步按钮
         btn_row = QHBoxLayout()
         self.sync_btn = QPushButton("同步"); self.sync_btn.setFont(QFont("微软雅黑", 22)); self.sync_btn.setFixedHeight(64)
         self.sync_btn.clicked.connect(self.sync)
@@ -150,14 +154,31 @@ class ControlPanel(QWidget):
         btn_row.addWidget(self.resync_btn)
         layout.addLayout(btn_row)
 
-
+        # 信息
         self.info_label = QLabel("当前阶段：未同步"); self.info_label.setFont(QFont("微软雅黑", 20, QFont.Bold))
         layout.addWidget(self.info_label, alignment=Qt.AlignCenter)
 
         self._stage_widgets = [w for i in range(self.row_stage.count()) if (w := self.row_stage.itemAt(i).widget())]
         self._timer_widgets = [w for i in range(self.row_timer.count()) if (w := self.row_timer.itemAt(i).widget())]
 
+    # -------- 自动分辨率检测 --------
+    def auto_detect_resolution(self) -> str:
+        """返回匹配到的 RES_GEOMETRY key，否则返回空字符串。"""
+        screen = QGuiApplication.primaryScreen()
+        if not screen:
+            return ""
+        g = screen.geometry()
+        w, h = g.width(), g.height()
 
+        # 以 "WxH" 前缀匹配 keys
+        wanted = f"{w}x{h}"
+        for key in RES_GEOMETRY.keys():
+            if key.startswith(wanted):
+                return key
+        # 没有精确匹配时不改动
+        return ""
+
+    # -------- 交互逻辑 --------
     def update_resolution(self, text: str):
         self.resolution_text = text
         if hasattr(self, "linked_overlay"):
@@ -166,32 +187,19 @@ class ControlPanel(QWidget):
     def on_mode_changed(self, text: str):
         self.tolerance_mode = text
         if text == "老师傅":
-            QMessageBox.information(
-                self, "温馨提示",
-                "仅为理论极限，切勿卡线打药。"
-            )
+            QMessageBox.information(self, "温馨提示", "仅为理论极限，切勿卡线打药。")
         if hasattr(self, "linked_overlay"):
             self.linked_overlay.update()
 
     def on_guides_toggled(self, state):
-        """启用 / 禁用刻度线"""
         self.guides_enabled = (state == Qt.Checked)
         if hasattr(self, "linked_overlay"):
             self.linked_overlay.update()
 
-    def on_hotkey_changed(self):
-        """修改快捷键后更新 QShortcut"""
-        seq = self.hotkey_edit.keySequence()
-        if seq.isEmpty():
-            QMessageBox.warning(self, "无效快捷键", "请输入有效快捷键")
-
-            self.hotkey_edit.setKeySequence(self.toggle_guides_shortcut.keySequence())
-            return
-        self.toggle_guides_shortcut.setKeySequence(seq)
-
-
-
     def sync(self):
+        # 开始前先清理任何遗留的语音排程，避免串音
+        self.voice.reset()
+
         try:
             m = int(self.minute_input.text()); s = int(self.second_input.text())
         except ValueError:
@@ -213,11 +221,21 @@ class ControlPanel(QWidget):
         if self.auto_min_chk.isChecked():
             self.showMinimized()
 
+        self.is_synced = True
+        if hasattr(self, "linked_overlay"):
+            self.linked_overlay.update()
+
     def resync(self):
+        # 立刻停止计时与所有语音内部倒计时
         self.zone_timer.stop()
+        self.voice.reset()
 
         for w in self._stage_widgets + self._timer_widgets:
             w.setVisible(True)
         self.resync_btn.hide(); self.sync_btn.show()
 
         self.info_label.setText("当前阶段：未同步")
+
+        self.is_synced = False
+        if hasattr(self, "linked_overlay"):
+            self.linked_overlay.update()

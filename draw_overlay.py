@@ -41,7 +41,7 @@ class HealthZoneOverlay(QWidget):
 
 
     def paintEvent(self, event):
-        if not getattr(self.controller, "guides_enabled", True):
+        if not getattr(self.controller, "is_synced", False) or not getattr(self.controller, "guides_enabled", True):
             return
 
         painter = QPainter(self)
